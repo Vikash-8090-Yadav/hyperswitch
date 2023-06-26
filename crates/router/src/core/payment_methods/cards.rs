@@ -299,9 +299,29 @@ pub async fn add_card_hs(
     let payment_method_resp = payment_methods::mk_add_card_response_hs(
         card,
         store_card_payload.card_reference,
-        req,
+        req.clone(),
         merchant_id,
     );
+    let payment_method_id = payment_method_resp.payment_method_id.clone();
+
+    let _add = db.insert_payment_method(storage::PaymentMethodNew {
+        customer_id,
+        merchant_id: merchant_account.merchant_id.clone(),
+        payment_method_id,
+        payment_method: req.clone().payment_method.foreign_into(),
+        payment_method_type: req
+            .clone()
+            .payment_method_type
+            .map(ForeignInto::foreign_into),
+        payment_method_issuer: req.clone().payment_method_issuer.clone(),
+        scheme: payment_method_resp
+            .card
+            .clone()
+            .map(|f| f.scheme.unwrap_or_default()),
+        metadata: req.clone().metadata,
+        ..storage::PaymentMethodNew::default()
+    });
+
     Ok((
         payment_method_resp,
         store_card_payload.duplicate.unwrap_or(false),
@@ -357,7 +377,29 @@ pub async fn add_card(
     let duplicate_check = response.duplicate.unwrap_or(false);
 
     let payment_method_resp =
-        payment_methods::mk_add_card_response(card, response, req, merchant_id);
+        payment_methods::mk_add_card_response(card, response, req.clone(), merchant_id);
+    let payment_method_id = payment_method_resp.payment_method_id.clone();
+
+    let _add = db
+        .insert_payment_method(storage::PaymentMethodNew {
+            customer_id,
+            merchant_id: merchant_account.merchant_id.clone(),
+            payment_method_id,
+            payment_method: req.clone().payment_method.foreign_into(),
+            payment_method_type: req
+                .clone()
+                .payment_method_type
+                .map(ForeignInto::foreign_into),
+            payment_method_issuer: req.clone().payment_method_issuer.clone(),
+            scheme: payment_method_resp
+                .card
+                .clone()
+                .map(|f| f.scheme.unwrap_or_default()),
+            metadata: req.clone().metadata,
+            ..storage::PaymentMethodNew::default()
+        })
+        .await;
+
     Ok((payment_method_resp, duplicate_check))
 }
 
