@@ -8,10 +8,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     configs::settings,
     core::errors::{self, CustomResult},
+    db::StorageInterface,
     headers,
     pii::{prelude::*, Secret},
     services::{api as services, encryption},
-    types::{api, storage},
+    types::{api, storage, transformers::ForeignInto},
     utils::{self, OptionExt},
 };
 
@@ -281,7 +282,8 @@ pub async fn mk_add_card_request_hs(
     Ok(request)
 }
 
-pub fn mk_add_card_response_hs(
+pub async fn save_payment_reponse_hs(
+    db: &dyn StorageInterface,
     card: api::CardDetail,
     card_reference: String,
     req: api::PaymentMethodCreate,
@@ -300,14 +302,54 @@ pub fn mk_add_card_response_hs(
         card_holder_name: card.card_holder_name,
         nick_name: card.nick_name,
     };
+
+    let pm_resp = db
+        .insert_payment_method(storage::PaymentMethodNew {
+            customer_id: req.clone().customer_id.unwrap_or_default(),
+            merchant_id: merchant_id.to_owned(),
+            payment_method_id: card_reference,
+            payment_method: req.payment_method.foreign_into(),
+            payment_method_type: req.payment_method_type.map(ForeignInto::foreign_into),
+            payment_method_issuer: req.clone().payment_method_issuer.clone(),
+            scheme: None,
+            metadata: req.clone().metadata,
+            ..storage::PaymentMethodNew::default()
+        })
+        .await;
+
     api::PaymentMethodResponse {
-        merchant_id: merchant_id.to_owned(),
-        customer_id: req.customer_id,
-        payment_method_id: card_reference,
-        payment_method: req.payment_method,
-        payment_method_type: req.payment_method_type,
+        merchant_id: pm_resp
+            .as_ref()
+            .map(|mid| mid.to_owned().merchant_id)
+            .unwrap_or_default(),
+        customer_id: Some(
+            pm_resp
+                .as_ref()
+                .map(|cid| cid.to_owned().customer_id)
+                .unwrap_or_default(),
+        ),
+        payment_method_id: pm_resp
+            .as_ref()
+            .map(|pmid| pmid.to_owned().payment_method_id)
+            .unwrap_or_default(),
+        payment_method: pm_resp
+            .as_ref()
+            .map(|pm| pm.to_owned().payment_method)
+            .unwrap_or_default()
+            .foreign_into(),
+        payment_method_type: pm_resp
+            .as_ref()
+            .map(|pmt| {
+                pmt.to_owned()
+                    .payment_method_type
+                    .map(|pmt| ForeignInto::foreign_into(pmt))
+            })
+            .unwrap_or_default(),
         card: Some(card),
-        metadata: req.metadata,
+        metadata: pm_resp
+            .as_ref()
+            .map(|md| md.to_owned().metadata)
+            .unwrap_or_default(),
         created: Some(common_utils::date_time::now()),
         recurring_enabled: false,           // [#256]
         installment_payment_enabled: false, // #[#256]
@@ -315,7 +357,8 @@ pub fn mk_add_card_response_hs(
     }
 }
 
-pub fn mk_add_card_response(
+pub async fn save_payment_reponse(
+    db: &dyn StorageInterface,
     card: api::CardDetail,
     response: AddCardResponse,
     req: api::PaymentMethodCreate,
@@ -329,19 +372,59 @@ pub fn mk_add_card_response(
         card_number: Some(card.card_number),
         expiry_month: Some(card.card_exp_month),
         expiry_year: Some(card.card_exp_year),
-        card_token: Some(response.external_id.into()), // [#256]
-        card_fingerprint: Some(response.card_fingerprint),
+        card_token: Some(response.clone().external_id.into()), // [#256]
+        card_fingerprint: Some(response.clone().card_fingerprint),
         card_holder_name: card.card_holder_name,
         nick_name: card.nick_name,
     };
+
+    let pm_resp = db
+        .insert_payment_method(storage::PaymentMethodNew {
+            customer_id: req.clone().customer_id.unwrap_or_default(),
+            merchant_id: merchant_id.to_owned(),
+            payment_method_id: response.clone().card_id,
+            payment_method: req.payment_method.foreign_into(),
+            payment_method_type: req.payment_method_type.map(ForeignInto::foreign_into),
+            payment_method_issuer: req.clone().payment_method_issuer.clone(),
+            scheme: None,
+            metadata: req.clone().metadata,
+            ..storage::PaymentMethodNew::default()
+        })
+        .await;
+
     api::PaymentMethodResponse {
-        merchant_id: merchant_id.to_owned(),
-        customer_id: req.customer_id,
-        payment_method_id: response.card_id,
-        payment_method: req.payment_method,
-        payment_method_type: req.payment_method_type,
+        merchant_id: pm_resp
+            .as_ref()
+            .map(|mid| mid.to_owned().merchant_id)
+            .unwrap_or_default(),
+        customer_id: Some(
+            pm_resp
+                .as_ref()
+                .map(|cid| cid.to_owned().customer_id)
+                .unwrap_or_default(),
+        ),
+        payment_method_id: pm_resp
+            .as_ref()
+            .map(|pmid| pmid.to_owned().payment_method_id)
+            .unwrap_or_default(),
+        payment_method: pm_resp
+            .as_ref()
+            .map(|pm| pm.to_owned().payment_method)
+            .unwrap_or_default()
+            .foreign_into(),
+        payment_method_type: pm_resp
+            .as_ref()
+            .map(|pmt| {
+                pmt.to_owned()
+                    .payment_method_type
+                    .map(|pmt| ForeignInto::foreign_into(pmt))
+            })
+            .unwrap_or_default(),
         card: Some(card),
-        metadata: req.metadata,
+        metadata: pm_resp
+            .as_ref()
+            .map(|md| md.to_owned().metadata)
+            .unwrap_or_default(),
         created: Some(common_utils::date_time::now()),
         recurring_enabled: false,           // [#256]
         installment_payment_enabled: false, // [#256] Pending on discussion, and not stored in the card locker
